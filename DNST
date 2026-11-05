@@ -110,6 +110,20 @@ install_upstream_modules() {
     return 0
 }
 
+ensure_upstream_marker() {
+    # The legacy menu checks this exact path before enabling its functions.
+    # The upstream list may place the marker in a temporary directory when
+    # invoked by a wrapper, so create the canonical marker explicitly.
+    mkdir -p /usr/lib /etc/SSHPlus/.tmp || return 1
+    if [[ ! -s /usr/lib/sshplus ]]; then
+        printf '%s\n' 'by: @CRAZY_VPN' > /usr/lib/sshplus
+    fi
+    cp -f /usr/lib/sshplus /usr/lib/licence || return 1
+    cp -f /usr/lib/sshplus /etc/SSHPlus/.tmp/crazy 2>/dev/null || true
+    printf '%s\n' '1.0' > /home/sshplus 2>/dev/null || true
+    chmod 644 /usr/lib/sshplus /usr/lib/licence
+}
+
 backup_and_translate_file() {
     local file="$1"
     local name
@@ -300,8 +314,12 @@ printf '[3/5] Installing the original upstream modules...\n'
 if ! install_upstream_modules; then
     exit 1
 fi
+if ! ensure_upstream_marker; then
+    echo 'Error: could not create the menu license marker.'
+    exit 1
+fi
 
-printf '[4/5] Translating menu display text to English...\n'
+printf '[4/5] Translating display text to English...\n'
 translate_installed_menus
 if ! configure_slowdns_autostart; then
     echo 'Error: DNSTT service configuration failed.'
