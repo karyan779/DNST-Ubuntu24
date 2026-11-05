@@ -73,6 +73,13 @@ prepare_slowdns() {
         return 1
     fi
     chmod 755 "$binary" || return 1
+    # A DNSTT public key is derived from the private key. Preserve an imported
+    # matching pair when moving from an old VPS; a public key alone is not enough.
+    if [[ -s /root/server.key && -s /root/server.pub && \
+          (! -s "$dir/server.key" || ! -s "$dir/server.pub") ]]; then
+        cp -f /root/server.key "$dir/server.key" || return 1
+        cp -f /root/server.pub "$dir/server.pub" || return 1
+    fi
     if [[ ! -s "$dir/server.key" || ! -s "$dir/server.pub" ]]; then
         rm -f "$dir/server.key" "$dir/server.pub" 2>/dev/null || true
         "$binary" -gen-key -privkey-file "$dir/server.key" -pubkey-file "$dir/server.pub" >/dev/null 2>&1 || true
@@ -83,6 +90,8 @@ prepare_slowdns() {
     fi
     chmod 600 "$dir/server.key" 2>/dev/null || true
     chmod 644 "$dir/server.pub" 2>/dev/null || true
+    cp -f "$dir/server.key" /root/server.key 2>/dev/null || true
+    cp -f "$dir/server.pub" /root/server.pub 2>/dev/null || true
     return 0
 }
 

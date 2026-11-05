@@ -8,7 +8,7 @@ Standalone Ubuntu 24.04 x86_64 installer for the SSHPlus modules with SlowDNS pr
 apt-get update -y && apt-get upgrade -y && wget -O DNST https://raw.githubusercontent.com/karyan779/DNST-Ubuntu24/main/DNST && chmod +x DNST && ./DNST
 ```
 
-The installer checks that the host is **Ubuntu 24.04 x86_64** and must be run as root.
+The installer checks that the host is **Ubuntu 24.04.x x86_64** and must be run as root. It is not a promise that every Ubuntu release beginning with `24` works: Ubuntu 24.10 was an interim release and is already end-of-life, while Ubuntu 24.04 LTS remains the supported choice. Use Ubuntu 24.04 LTS, preferably the latest point release.
 
 ## What it changes
 
@@ -32,6 +32,18 @@ ss -lunp | grep -E ':53|:5300'
 ```
 
 Use the Ubuntu 24 repository URL above. The older URL `https://raw.githubusercontent.com/karyan779/DNST/main/DNST` is the separate Ubuntu 20 installer and should not be used on Ubuntu 24.
+
+## Moving to a new VPS without changing the client public key
+
+`server.pub` is not an independent password. It is derived from the matching private key `server.key`. Copying only `server.pub` to a new VPS cannot work. Before deleting the old VPS, transfer both files securely:
+
+```bash
+scp /root/server.key /root/server.pub root@NEW_VPS_IP:/root/
+```
+
+On the new VPS, place both files at `/root/server.key` and `/root/server.pub` **before** running this installer. The installer detects that matching pair, preserves it under `/etc/SSHPlus/dns/`, and starts the service with the same identity. The client can continue using the old `server.pub`.
+
+Never publish or send `server.key`; it is the server's private key. If only the public key remains, generate a new pair on the new VPS and replace the public key in the client configuration.
 
 ## Warning
 
