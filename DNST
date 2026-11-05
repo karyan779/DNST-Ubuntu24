@@ -1,0 +1,313 @@
+#!/bin/bash
+
+# DNST / SSHPlus installer for Ubuntu 24.04 x86_64.
+# The upstream modules remain functionally intact; menu display text is translated
+# after installation and the original menu files are backed up first.
+
+clear >/dev/null 2>&1 || true
+
+if [[ "$(id -u)" -ne 0 ]]; then
+    echo "Error: run this installer as root."
+    exit 1
+fi
+
+if [[ ! -r /etc/os-release ]]; then
+    echo "Error: cannot identify the operating system."
+    exit 1
+fi
+. /etc/os-release
+if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID%%.*}" != "24" ]]; then
+    echo "Error: this release is for Ubuntu 24.04 only. Detected: ${PRETTY_NAME:-unknown}."
+    exit 1
+fi
+if [[ "$(uname -m)" != "x86_64" ]]; then
+    echo "Error: this build requires x86_64. Detected: $(uname -m)."
+    exit 1
+fi
+
+UPSTREAM_BASE='https://raw.githubusercontent.com/AAAAAEXQOSyIpN2JZ0ehUQ/SSHPLUS-MANAGER-FREE/master'
+SLOWDNS_BINARY='https://raw.githubusercontent.com/powermx/dnstt/main/dns-server'
+WORK_DIR='/usr/local/lib/sshplus-installer'
+mkdir -p "$WORK_DIR" /etc/SSHPlus || {
+    echo "Error: cannot create installer directories."
+    exit 1
+}
+cd /root || exit 1
+
+fetch_file() {
+    local url="$1"
+    local destination="$2"
+    local temp="${destination}.tmp.$$"
+    rm -f "$temp" 2>/dev/null || true
+    if command -v curl >/dev/null 2>&1; then
+        curl -fL --retry 3 --connect-timeout 10 --max-time 180 "$url" -o "$temp" >/dev/null 2>&1
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "$temp" "$url" >/dev/null 2>&1
+    else
+        rm -f "$temp" 2>/dev/null || true
+        return 1
+    fi
+    if [[ ! -s "$temp" ]]; then
+        rm -f "$temp" 2>/dev/null || true
+        return 1
+    fi
+    mv -f "$temp" "$destination"
+}
+
+install_packages() {
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y >/dev/null 2>&1 || return 1
+    apt-get install -y \
+        bc screen nano unzip lsof net-tools dos2unix nload jq curl wget \
+        figlet python3 python3-pip iptables iptables-persistent cron \
+        ca-certificates >/dev/null 2>&1 || return 1
+    return 0
+}
+
+prepare_slowdns() {
+    local dir='/etc/SSHPlus/dns'
+    local binary="$dir/dns-server"
+    mkdir -p "$dir" || return 1
+    if ! fetch_file "$SLOWDNS_BINARY" "$binary"; then
+        echo "Error: SlowDNS binary download failed."
+        return 1
+    fi
+    chmod 755 "$binary" || return 1
+    if [[ ! -s "$dir/server.key" || ! -s "$dir/server.pub" ]]; then
+        rm -f "$dir/server.key" "$dir/server.pub" 2>/dev/null || true
+        "$binary" -gen-key -privkey-file "$dir/server.key" -pubkey-file "$dir/server.pub" >/dev/null 2>&1 || true
+    fi
+    if [[ ! -s "$dir/server.key" || ! -s "$dir/server.pub" ]]; then
+        echo "Error: SlowDNS key generation failed; server.pub was not created."
+        return 1
+    fi
+    chmod 600 "$dir/server.key" 2>/dev/null || true
+    chmod 644 "$dir/server.pub" 2>/dev/null || true
+    return 0
+}
+
+install_upstream_modules() {
+    local list="$WORK_DIR/list"
+    if ! fetch_file "$UPSTREAM_BASE/Install/list" "$list"; then
+        echo "Error: upstream module list download failed."
+        return 1
+    fi
+    chmod 700 "$list"
+    # The upstream list script is retained and executed to install its original modules.
+    bash "$list" '/bin' "$WORK_DIR" "$WORK_DIR" '' >/dev/null 2>&1 || {
+        echo "Error: upstream module installation failed."
+        return 1
+    }
+    return 0
+}
+
+backup_and_translate_file() {
+    local file="$1"
+    local name
+    [[ -f "$file" ]] || return 0
+    name=$(basename "$file")
+    cp -a "$file" "/etc/SSHPlus/original-${name}" 2>/dev/null || true
+
+    # Only display strings are translated. Function names, menu numbers, URLs,
+    # commands, paths, variables, and data are intentionally left unchanged.
+    sed -i \
+      -e 's|EXISTE UMA ATUALIZACAO DISPONIVEL|AN UPDATE IS AVAILABLE|g' \
+      -e 's|REINICIAR SISTEMA|RESTART SYSTEM|g' \
+      -e 's|REINICIAR SERVICOS|RESTART SERVICES|g' \
+      -e 's|DESATIVANDO AUTO EXECUCAO|DISABLING AUTO-EXECUTION|g' \
+      -e 's|DESATIVANDO AUTO EXECUÇÃO|DISABLING AUTO-EXECUTION|g' \
+      -e 's|ATIVANDO AUTO EXECUCAO|ENABLING AUTO-EXECUTION|g' \
+      -e 's|ATIVANDO AUTO EXECUÇÃO|ENABLING AUTO-EXECUTION|g' \
+      -e 's|SISTEMA|SYSTEM|g' \
+      -e 's|MEMÓRIA RAM|RAM MEMORY|g' \
+      -e 's|PROCESSADOR|PROCESSOR|g' \
+      -e 's|Nucleos|Cores|g' \
+      -e 's|Hora:|Time:|g' \
+      -e 's|Em uso:|Usage:|g' \
+      -e 's|Onlines:|Online:|g' \
+      -e 's|Expirados:|Expired:|g' \
+      -e 's|CRIAR USUARIO TESTE|CREATE TEST USER|g' \
+      -e 's|CRIAR USUARIO|CREATE USER|g' \
+      -e 's|CRIAR TESTE|CREATE TEST USER|g' \
+      -e 's|REMOVER USUARIO|REMOVE USER|g' \
+      -e 's|MONITOR ONLINE|ONLINE MONITOR|g' \
+      -e 's|MUDAR DATA|CHANGE DATE|g' \
+      -e 's|ALTERAR LIMITE|CHANGE LIMIT|g' \
+      -e 's|MUDAR SENHA ROOT|CHANGE ROOT PASSWORD|g' \
+      -e 's|MUDAR SENHA|CHANGE PASSWORD|g' \
+      -e 's|REMOVER EXPIRADOS|REMOVE EXPIRED USERS|g' \
+      -e 's|RELATORIO DE USUARIOS|USER REPORT|g' \
+      -e 's|RELATORIO USUARIOS|USER REPORT|g' \
+      -e 's|MODO DE CONEXAO|CONNECTION MODE|g' \
+      -e 's|TRAFEGO|TRAFFIC|g' \
+      -e 's|OTIMIZAR|OPTIMIZE|g' \
+      -e 's|ATUALIZACAO DISPONIVEL|UPDATE AVAILABLE|g' \
+      -e 's|ATUALIZAR SCRIPT|UPDATE SCRIPT|g' \
+      -e 's|REMOVER SCRIPT|REMOVE SCRIPT|g' \
+      -e 's|ADICIONAR HOST|ADD HOST|g' \
+      -e 's|REMOVER HOST|REMOVE HOST|g' \
+      -e 's|REINICIAR SISTEMA|RESTART SYSTEM|g' \
+      -e 's|REINICIAR SERVICOS|RESTART SERVICES|g' \
+      -e 's|RESTART SISTEMA|RESTART SYSTEM|g' \
+      -e 's|RESTART SERVICOS|RESTART SERVICES|g' \
+      -e 's|GERENCIAR USUARIOS|MANAGE USERS|g' \
+      -e 's|GERENCIAR FERRAMENTAS|MANAGE TOOLS|g' \
+      -e 's|GERENCIAR SISTEMA|MANAGE SYSTEM|g' \
+      -e 's|VERIFICACOES|CHECKS|g' \
+      -e 's|AUTO EXECUCAO|AUTO-EXECUTION|g' \
+      -e 's|AUTO EXECUÇÃO|AUTO-EXECUTION|g' \
+      -e 's|ATIVANDO AUTO-EXECUTION|ENABLING AUTO-EXECUTION|g' \
+      -e 's|ATIVANDO AUTO EXECUCAO|ENABLING AUTO-EXECUTION|g' \
+      -e 's|ATIVANDO AUTO EXECUÇÃO|ENABLING AUTO-EXECUTION|g' \
+      -e 's|DESATIVANDO AUTO EXECUCAO|DISABLING AUTO-EXECUTION|g' \
+      -e 's|DESATIVANDO AUTO EXECUÇÃO|DISABLING AUTO-EXECUTION|g' \
+      -e 's|AUTO EXECUCAO ATIVADO|AUTO-EXECUTION ENABLED|g' \
+      -e 's|AUTO EXECUÇÃO ATIVADO|AUTO-EXECUTION ENABLED|g' \
+      -e 's|AUTO EXECUCAO DESATIVADO|AUTO-EXECUTION DISABLED|g' \
+      -e 's|AUTO EXECUÇÃO DESATIVADO|AUTO-EXECUTION DISABLED|g' \
+      -e 's|INICIANDO O LIMITER|STARTING LIMITER|g' \
+      -e 's|LIMITER ATIVO|LIMITER ACTIVE|g' \
+      -e 's|PARANDO O LIMITER|STOPPING LIMITER|g' \
+      -e 's|LIMITER PARADO|LIMITER STOPPED|g' \
+      -e 's|TESTANDO A VELOCIDADE DO SERVIDOR|TESTING SERVER SPEED|g' \
+      -e 's|PARA SAIR CLICK CTRL + C|PRESS CTRL+C TO EXIT|g' \
+      -e 's|OQUE DESEJA FAZER|WHAT DO YOU WANT TO DO|g' \
+      -e 's|Opcao invalida|Invalid option|g' \
+      -e 's|OPCAO INVALIDA|INVALID OPTION|g' \
+      -e 's|ENTER para retornar ao MENU|PRESS ENTER TO RETURN TO THE MENU|g' \
+      -e 's|ENTER para retornar ao MENU!|PRESS ENTER TO RETURN TO THE MENU!|g' \
+      -e 's|Saindo|Exiting|g' \
+      -e 's|SAIR DO MENU|EXIT MENU|g' \
+      -e 's|SAIR|EXIT|g' \
+      -e 's|VOLTAR|BACK|g' \
+      -e 's|MAIS|MORE|g' \
+      -e 's|AGUARDE|PLEASE WAIT|g' \
+      -e 's|ATUALIZANDO SISTEMA|UPDATING SYSTEM|g' \
+      -e 's|INSTALANDO PACOTES|INSTALLING PACKAGES|g' \
+      -e 's|FINALIZANDO|FINALIZING|g' \
+      -e 's|INSTALACAO CONCLUIDA|INSTALLATION COMPLETED|g' \
+      -e 's|CONCLUINDO FUNÇÕES E DEFINIÇÕES|COMPLETING FUNCTIONS AND SETTINGS|g' \
+      -e 's|DESEJA CONTINUAR|DO YOU WANT TO CONTINUE|g' \
+      -e 's|\[s/n\]|[y/n]|g' \
+      -e 's|\[S/N\]|[Y/N]|g' \
+      "$file" 2>/dev/null || true
+}
+
+translate_installed_menus() {
+    local file
+    for file in /bin/menu /bin/menuV1 /bin/menuV2 /bin/menuV3 /bin/slow_dns /etc/SSHPlus/*.sh /etc/SSHPlus/*.py; do
+        [[ -f "$file" ]] && backup_and_translate_file "$file"
+    done
+}
+
+configure_slowdns_autostart() {
+    local dir='/etc/SSHPlus/dns'
+    mkdir -p "$dir"
+    if [[ -f /etc/slowdns/infons && ! -s "$dir/infons" ]]; then
+        cp -f /etc/slowdns/infons "$dir/infons" 2>/dev/null || true
+    fi
+    if [[ ! -s "$dir/infons" ]]; then
+        printf 'Enter the DNSTT tunnel domain (for example: t.example.com): '
+        read -r nameserver
+        if [[ -z "$nameserver" || "$nameserver" == *[[:space:]]* ]]; then
+            echo 'Error: a non-empty tunnel domain without spaces is required.'
+            return 1
+        fi
+        printf '%s\n' "$nameserver" > "$dir/infons"
+    fi
+    if [[ -s "$dir/server.pub" ]]; then
+        cp -f "$dir/server.pub" /root/server.pub 2>/dev/null || true
+    fi
+    cat > /usr/local/sbin/dnstt-ssh-start <<'EOF'
+#!/bin/bash
+set -u
+dir='/etc/SSHPlus/dns'
+nameserver=''
+for file in "$dir/infons" /etc/slowdns/infons; do
+    if [[ -s "$file" ]]; then
+        nameserver=$(head -n 1 "$file" | tr -d '[:space:]')
+        [[ -n "$nameserver" ]] && break
+    fi
+done
+if [[ -z "$nameserver" ]]; then
+    echo 'Missing NS/tunnel domain. Put the tunnel domain in /etc/SSHPlus/dns/infons.' >&2
+    exit 1
+fi
+exec "$dir/dns-server" -udp :5300 -privkey-file "$dir/server.key" "$nameserver" 127.0.0.1:22
+EOF
+    chmod 755 /usr/local/sbin/dnstt-ssh-start
+    cat > /etc/systemd/system/dnstt-ssh.service <<'EOF'
+[Unit]
+Description=DNSTT SSH tunnel server
+After=network-online.target ssh.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/dnstt-ssh-start
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    chmod 644 /etc/systemd/system/dnstt-ssh.service
+    if command -v iptables >/dev/null 2>&1; then
+        iptables -C INPUT -p udp --dport 5300 -j ACCEPT 2>/dev/null || \
+            iptables -I INPUT -p udp --dport 5300 -j ACCEPT
+        iptables -t nat -C PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || \
+            iptables -t nat -I PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300
+    fi
+    systemctl daemon-reload
+    systemctl enable dnstt-ssh.service >/dev/null 2>&1 || true
+    systemctl restart dnstt-ssh.service >/dev/null 2>&1 || true
+    if command -v netfilter-persistent >/dev/null 2>&1; then
+        netfilter-persistent save >/dev/null 2>&1 || true
+    fi
+}
+
+printf '\n=== DNST / SSHPlus for Ubuntu 24.04 x86_64 ===\n\n'
+printf 'This installer changes SSH, firewall, services, cron, and user-management files.\n'
+printf 'The original menu files are backed up under /etc/SSHPlus/original-* before translation.\n\n'
+printf 'Continue? [Y/N]: '
+read -r -e -i y answer
+[[ "$answer" =~ ^([nN]|no|NO)$ ]] && { echo 'Cancelled.'; exit 0; }
+
+printf '\n[1/5] Installing Ubuntu 24 dependencies...\n'
+if ! install_packages; then
+    echo 'Error: apt dependency installation failed. Check Ubuntu 24 apt sources and network.'
+    exit 1
+fi
+
+printf '[2/5] Preparing SlowDNS binary and keys...\n'
+if ! prepare_slowdns; then
+    exit 1
+fi
+
+printf '[3/5] Installing the original upstream modules...\n'
+if ! install_upstream_modules; then
+    exit 1
+fi
+
+printf '[4/5] Translating menu display text to English...\n'
+translate_installed_menus
+if ! configure_slowdns_autostart; then
+    echo 'Error: DNSTT service configuration failed.'
+    exit 1
+fi
+
+printf '[5/5] Creating the menu command...\n'
+cat > /usr/local/bin/dnst-menu <<'EOF'
+#!/bin/bash
+exec /bin/menu "$@"
+EOF
+chmod 755 /usr/local/bin/dnst-menu
+ln -sf /usr/local/bin/dnst-menu /usr/local/bin/menu 2>/dev/null || true
+
+printf '\nINSTALLATION COMPLETED\n'
+printf 'MAIN COMMAND: menu\n'
+printf 'SLOWDNS BINARY: /etc/SSHPlus/dns/dns-server\n'
+printf 'PUBLIC KEY: /etc/SSHPlus/dns/server.pub\n'
+printf 'SERVICE: systemctl status dnstt-ssh --no-pager\n'
+printf 'Original menu backups: /etc/SSHPlus/original-*\n'
