@@ -253,9 +253,15 @@ if [[ -z "$nameserver" ]]; then
     echo 'Missing NS/tunnel domain. Put the tunnel domain in /etc/SSHPlus/dns/infons.' >&2
     exit 1
 fi
-exec "$dir/dns-server" -udp :5300 -privkey-file "$dir/server.key" "$nameserver" 127.0.0.1:22
+exec -a slow_dns "$dir/dns-server" -udp :5300 -privkey-file "$dir/server.key" "$nameserver" 127.0.0.1:22
 EOF
     chmod 755 /usr/local/sbin/dnstt-ssh-start
+    # Compatibility file required by the legacy Connection Mode menu.
+    # The real long-running process is managed by systemd below.
+    cat > "$dir/autodns" <<'EOF'
+screen -dmS slow_dns /etc/SSHPlus/dns/dns-server -udp :5300 -privkey-file /etc/SSHPlus/dns/server.key DOMAIN 127.0.0.1:22
+EOF
+    chmod 700 "$dir/autodns"
     cat > /etc/systemd/system/dnstt-ssh.service <<'EOF'
 [Unit]
 Description=DNSTT SSH tunnel server
