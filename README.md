@@ -33,6 +33,8 @@ ss -lunp | grep -E ':53|:5300'
 
 Use the Ubuntu 24 repository URL above. The older URL `https://raw.githubusercontent.com/karyan779/DNST/main/DNST` is the separate Ubuntu 20 installer and should not be used on Ubuntu 24.
 
+The installer does not require the tunnel domain during the package-install stage. If no domain is configured, it completes and opens the menu. Configure the domain using the menu's SlowDNS setup, then start the persistent service with `systemctl enable --now dnstt-ssh`.
+
 ## Moving to a new VPS without changing the client public key
 
 `server.pub` is not an independent password. It is derived from the matching private key `server.key`. Copying only `server.pub` to a new VPS cannot work. Before deleting the old VPS, transfer both files securely:

@@ -211,18 +211,15 @@ translate_installed_menus() {
 
 configure_slowdns_autostart() {
     local dir='/etc/SSHPlus/dns'
+    local domain_ready=0
     mkdir -p "$dir"
     if [[ -f /etc/slowdns/infons && ! -s "$dir/infons" ]]; then
         cp -f /etc/slowdns/infons "$dir/infons" 2>/dev/null || true
     fi
     if [[ ! -s "$dir/infons" ]]; then
-        printf 'Enter the DNSTT tunnel domain (for example: t.example.com): '
-        read -r nameserver
-        if [[ -z "$nameserver" || "$nameserver" == *[[:space:]]* ]]; then
-            echo 'Error: a non-empty tunnel domain without spaces is required.'
-            return 1
-        fi
-        printf '%s\n' "$nameserver" > "$dir/infons"
+        echo 'No DNSTT domain is configured yet; continuing so the menu can be opened.'
+    else
+        domain_ready=1
     fi
     if [[ -s "$dir/server.pub" ]]; then
         cp -f "$dir/server.pub" /root/server.pub 2>/dev/null || true
@@ -262,16 +259,21 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
     chmod 644 /etc/systemd/system/dnstt-ssh.service
-    if command -v iptables >/dev/null 2>&1; then
+    if [[ "$domain_ready" -eq 1 ]] && command -v iptables >/dev/null 2>&1; then
         iptables -C INPUT -p udp --dport 5300 -j ACCEPT 2>/dev/null || \
             iptables -I INPUT -p udp --dport 5300 -j ACCEPT
         iptables -t nat -C PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || \
             iptables -t nat -I PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300
     fi
     systemctl daemon-reload
-    systemctl enable dnstt-ssh.service >/dev/null 2>&1 || true
-    systemctl restart dnstt-ssh.service >/dev/null 2>&1 || true
-    if command -v netfilter-persistent >/dev/null 2>&1; then
+    if [[ "$domain_ready" -eq 1 ]]; then
+        systemctl enable dnstt-ssh.service >/dev/null 2>&1 || true
+        systemctl restart dnstt-ssh.service >/dev/null 2>&1 || true
+    else
+        systemctl disable dnstt-ssh.service >/dev/null 2>&1 || true
+        echo 'DNSTT service is installed but not started. Configure the domain from the menu first.'
+    fi
+    if [[ "$domain_ready" -eq 1 ]] && command -v netfilter-persistent >/dev/null 2>&1; then
         netfilter-persistent save >/dev/null 2>&1 || true
     fi
 }
@@ -319,4 +321,5 @@ printf 'MAIN COMMAND: menu\n'
 printf 'SLOWDNS BINARY: /etc/SSHPlus/dns/dns-server\n'
 printf 'PUBLIC KEY: /etc/SSHPlus/dns/server.pub\n'
 printf 'SERVICE: systemctl status dnstt-ssh --no-pager\n'
+printf 'After setting the domain, start with: systemctl enable --now dnstt-ssh\n'
 printf 'Original menu backups: /etc/SSHPlus/original-*\n'
